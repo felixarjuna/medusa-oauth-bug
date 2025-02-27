@@ -5,6 +5,9 @@ import medusaError from "@lib/util/medusa-error"
 import { HttpTypes } from "@medusajs/types"
 import { revalidateTag } from "next/cache"
 import { redirect } from "next/navigation"
+import { decodeToken } from "react-jwt"
+import { z } from "zod"
+import { createServerAction, ZSAError } from "zsa"
 import {
   getAuthHeaders,
   getCacheOptions,
@@ -129,10 +132,10 @@ export async function login(_currentState: unknown, formData: FormData) {
 export async function signout(countryCode: string) {
   await sdk.auth.logout()
   removeAuthToken()
-  
+
   const customerCacheTag = await getCacheTag("customers")
   revalidateTag(customerCacheTag)
-  
+
   redirect(`/${countryCode}/account`)
 }
 
@@ -252,3 +255,81 @@ export const updateCustomerAddress = async (
       return { success: false, error: err.toString() }
     })
 }
+
+export const loginWithGoogle = createServerAction().handler(async () => {
+  try {
+    const result = await sdk.auth.login("customer", "google", {})
+    const response =
+      typeof result === "string"
+        ? { token: result }
+        : { location: result.location }
+    return response
+  } catch (error: any) {
+    throw new ZSAError("ERROR", error.toString())
+  }
+})
+
+type GoogleOAuthCallbackResponse = {
+  readonly actor_id: string
+  readonly actor_type: string
+  readonly auth_identity_id: string
+  readonly app_metadata: object
+  readonly iat: number
+  readonly exp: number
+}
+export const handleGoogleOAuthCallback = createServerAction()
+  .input(
+    z.object({
+      code: z.string(),
+      state: z.string(),
+    })
+  )
+  .handler(async ({ input }) => {
+    try {
+      /** see complete docs on
+       * https://docs.medusajs.com/resources/storefront-development/customers/third-party-login.
+       */
+
+      /** send callback to backend for auth token. */
+      let token = await sdk.auth.callback("customer", "google", {
+        code: input.code,
+        state: input.state,
+      })
+      const decodedToken = decodeToken(token) as GoogleOAuthCallbackResponse
+      console.log("decoded token:\n", decodedToken)
+
+      await setAuthToken(token)
+
+      /** validate auth token.
+       * create customer if token is empty.
+       * refresh token if customer already exists.
+       */
+      const headers = {
+        ...(await getAuthHeaders()),
+      }
+      const shouldCreateCustomer = decodedToken.actor_id === ""
+      if (shouldCreateCustomer) {
+        const customer = await sdk.store.customer.create(
+          {
+            email: decodedToken.actor_id,
+          },
+          {},
+          headers
+        )
+        console.log("Created customer", customer)
+
+        await sdk.auth.refresh()
+      }
+
+      const { customer } = await sdk.client.fetch<{
+        customer: HttpTypes.StoreCustomer
+      }>("store/customers/me", {
+        method: "GET",
+        headers: { authorization: `Bearer ${token}` },
+        cache: "force-cache",
+      })
+    } catch (error: any) {
+      console.log(error)
+      throw new ZSAError("ERROR", error.toString())
+    }
+  })

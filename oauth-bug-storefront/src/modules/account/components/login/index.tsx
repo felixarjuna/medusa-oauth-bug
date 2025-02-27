@@ -1,9 +1,13 @@
-import { login } from "@lib/data/customer"
+import { login, loginWithGoogle } from "@lib/data/customer"
+import { Button, toast } from "@medusajs/ui"
 import { LOGIN_VIEW } from "@modules/account/templates/login-template"
 import ErrorMessage from "@modules/checkout/components/error-message"
 import { SubmitButton } from "@modules/checkout/components/submit-button"
 import Input from "@modules/common/components/input"
+import { useRouter } from "next/navigation"
 import { useActionState } from "react"
+import { FaGoogle } from "react-icons/fa"
+import { useServerAction } from "zsa-react"
 
 type Props = {
   setCurrentView: (view: LOGIN_VIEW) => void
@@ -11,6 +15,16 @@ type Props = {
 
 const Login = ({ setCurrentView }: Props) => {
   const [message, formAction] = useActionState(login, null)
+
+  const router = useRouter()
+  const { execute } = useServerAction(loginWithGoogle, {
+    onError: ({ err }) => {
+      toast.error(`Authentication failed`, { description: err.message })
+    },
+    onSuccess: ({ data }) => {
+      if (data.location) router.push(data.location)
+    },
+  })
 
   return (
     <div
@@ -46,6 +60,23 @@ const Login = ({ setCurrentView }: Props) => {
           Sign in
         </SubmitButton>
       </form>
+
+      <div className="flex items-center gap-x-2 mt-4 w-full">
+        <span className="h-px flex-1 bg-gray-500" />
+        <p>or</p>
+        <span className="h-px flex-1 bg-gray-500" />
+      </div>
+
+      <Button
+        data-testid="google-button"
+        className="w-full mt-6 h-10 flex items-center gap-x-1"
+        onClick={() => execute()}
+        variant="secondary"
+      >
+        <FaGoogle className="mr-2" />
+        Continue with Google
+      </Button>
+
       <span className="text-center text-ui-fg-base text-small-regular mt-6">
         Not a member?{" "}
         <button
